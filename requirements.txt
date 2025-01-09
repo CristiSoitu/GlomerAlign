@@ -1,0 +1,10 @@
+# Core dependencies
+napari                     
+PyYAML                     
+
+# Scientific computing
+numpy                      
+scipy                    
+
+scikit-image               
+opencv-python              
