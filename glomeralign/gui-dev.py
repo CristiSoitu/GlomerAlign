@@ -1,11 +1,31 @@
 import napari
 from qtpy.QtWidgets import (
-    QPushButton, QVBoxLayout, QWidget, QFileDialog, QInputDialog, QDialog, QScrollArea, QVBoxLayout, QCheckBox, QDialogButtonBox, QHBoxLayout
+    QPushButton, QVBoxLayout, QWidget, QFileDialog, QInputDialog, QDialog, QScrollArea, QVBoxLayout, QCheckBox, QDialogButtonBox, QHBoxLayout, QMessageBox
 )
 from tifffile import imread, imwrite
 import numpy as np
 from scipy.ndimage import rotate
+from PyQt5.QtCore import QThread, pyqtSignal
+import yaml
+from cellpose import models
 
+
+class SegmentationWorker(QThread):
+    finished = pyqtSignal(np.ndarray)
+
+    def __init__(self, data, model_path, is_3d=False):
+        super().__init__()
+        self.data = data
+        self.model_path = model_path
+        self.is_3d = is_3d
+
+    def run(self):
+        model = models.CellposeModel(gpu=True, pretrained_model=self.model_path)
+        if self.is_3d:
+            segmented = model.eval(self.data, channels=[0, 0], do_3D=True)[0]
+        else:
+            segmented = np.array([model.eval(slice, channels=[0, 0])[0] for slice in self.data])
+        self.finished.emit(segmented)
 
 class SliceSelectorDialog(QDialog):
     def __init__(self, num_slices, parent=None):
@@ -64,11 +84,12 @@ class SliceSelectorDialog(QDialog):
 
 
 class ImageLoader(QWidget):
-    def __init__(self, viewer):
+    def __init__(self, viewer, config_path="config/config.yaml"):
         super().__init__()
         self.viewer = viewer
         self.loaded_layer_name = None  # Track the loaded image layer name
-        self.selected_slices = set()  # Track selected slices
+        self.model_paths = self.load_config(config_path)
+
         
         # Layout
         layout = QVBoxLayout()
@@ -92,6 +113,15 @@ class ImageLoader(QWidget):
         self.select_slices_button.clicked.connect(self.select_slices)
         layout.addWidget(self.select_slices_button)
 
+        # Segmentation buttons
+        self.segment_2d_button = QPushButton("Segmentation 2D")
+        self.segment_2d_button.clicked.connect(self.segment_2d)
+        layout.addWidget(self.segment_2d_button)
+
+        self.segment_3d_button = QPushButton("Segmentation 3D")
+        self.segment_3d_button.clicked.connect(self.segment_3d)
+        layout.addWidget(self.segment_3d_button)
+
         # Transform buttons
         self.rotate_180_button = QPushButton("Rotate 180°")
         self.rotate_180_button.clicked.connect(self.rotate_180)
@@ -114,6 +144,15 @@ class ImageLoader(QWidget):
         layout.addWidget(self.custom_rotate_button)
 
         self.setLayout(layout)
+
+    def load_config(self, config_path):
+        try:
+            with open(config_path, 'r') as file:
+                config = yaml.safe_load(file)
+            return config['models']
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load config file: {e}")
+            return {"2d": None, "3d": None}        
         
     def load_image(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Image File", filter="TIFF Files (*.tif *.tiff)")
@@ -173,6 +212,7 @@ class ImageLoader(QWidget):
     def flip_vertical(self):
         self.apply_transformation(np.flipud)
 
+
     def rotate_custom(self):
         if not self.selected_slices:
             print("No slices selected for transformation.")
@@ -211,6 +251,51 @@ class ImageLoader(QWidget):
 
         layer.refresh()  # Update the viewer
         print(f"Transformed slices: {self.selected_slices}")
+
+
+    def segment_2d(self):
+        if self.loaded_layer_name is None:
+            QMessageBox.warning(self, "Warning", "No image loaded for segmentation.")
+            return
+        
+        if not self.model_paths['2d']:
+            QMessageBox.warning(self, "Warning", "2D model path not specified in config.")
+            return
+
+        try:
+            layer = self.viewer.layers[self.loaded_layer_name]
+        except KeyError:
+            QMessageBox.critical(self, "Error", "Layer not found.")
+            return
+
+        self.run_segmentation(layer.data, self.model_paths['2d'], is_3d=False)
+
+    def segment_3d(self):
+        if self.loaded_layer_name is None:
+            QMessageBox.warning(self, "Warning", "No image loaded for segmentation.")
+            return
+
+        if not self.model_paths['3d']:
+            QMessageBox.warning(self, "Warning", "3D model path not specified in config.")
+            return
+
+        try:
+            layer = self.viewer.layers[self.loaded_layer_name]
+        except KeyError:
+            QMessageBox.critical(self, "Error", "Layer not found.")
+            return
+
+        self.run_segmentation(layer.data, self.model_paths['3d'], is_3d=True)
+
+    def run_segmentation(self, data, model_path, is_3d):
+        self.worker = SegmentationWorker(data, model_path, is_3d)
+        self.worker.finished.connect(self.display_segmentation_result)
+        self.worker.start()
+
+    def display_segmentation_result(self, result):
+        self.viewer.add_labels(result, name="Segmentation Result")
+        QMessageBox.information(self, "Segmentation Complete", "Segmentation completed and added to viewer.")
+
 
 
 def main():

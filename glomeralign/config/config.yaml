@@ -1,0 +1,3 @@
+models:
+  2d: "/Users/soitu/Desktop/cellpose_models/2d/CP_20240823_095004"
+  3d: "/Users/soitu/Desktop/cellpose_models/3d/CP_20250114_20thslice"
