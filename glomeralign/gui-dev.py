@@ -8,7 +8,13 @@ from scipy.ndimage import rotate
 from PyQt5.QtCore import QThread, pyqtSignal
 import yaml
 from cellpose import models
+import os
+import json
 
+
+MATCHES_DIR = "matches"
+os.makedirs(MATCHES_DIR, exist_ok=True)
+MATCH_FILE = os.path.join(MATCHES_DIR, "matches.json")
 
 class SegmentationWorker(QThread):
     finished = pyqtSignal(np.ndarray)
@@ -24,7 +30,9 @@ class SegmentationWorker(QThread):
         if self.is_3d:
             segmented = model.eval(self.data, channels=[0, 0], do_3D=True)[0]
         else:
-            segmented = np.array([model.eval(slice, channels=[0, 0])[0] for slice in self.data])
+            segmented = np.array([model.eval(slice, channels=[2, 0], flow_threshold=0, cellprob_threshold=0)[0] for slice in self.data])
+            # load masks in a different layer
+
         self.finished.emit(segmented)
 
 class SliceSelectorDialog(QDialog):
@@ -84,11 +92,15 @@ class SliceSelectorDialog(QDialog):
 
 
 class ImageLoader(QWidget):
-    def __init__(self, viewer, config_path="config/config.yaml"):
+    def __init__(self, viewer, config_path="glomeralign/config/config.yaml"):
         super().__init__()
         self.viewer = viewer
         self.loaded_layer_name = None  # Track the loaded image layer name
         self.model_paths = self.load_config(config_path)
+        self.last_click = None  # Store last clicked position in this viewer
+        self.other_loader = None  # Reference to the other viewer's ImageLoader
+
+        self.viewer.bind_key('h', self.match_labels)  # Bind 'm' key to matching
 
         
         # Layout
@@ -102,6 +114,9 @@ class ImageLoader(QWidget):
         self.load_mask_button = QPushButton("Load Mask")
         self.load_mask_button.clicked.connect(self.load_mask)
         layout.addWidget(self.load_mask_button)
+
+        self.matches_layer = None  # Layer for matched labels
+        self.selected_labels = {"viewer": None}  # Stores selected label ID
 
         # Save button
         self.save_button = QPushButton("Save Image")
@@ -145,6 +160,106 @@ class ImageLoader(QWidget):
 
         self.setLayout(layout)
 
+
+        
+    def setup_matching(self, mask_layer):
+        """Set up click events for label matching."""
+        mask_layer.mouse_drag_callbacks.append(self.record_click)
+
+        # Create 'Matches' layer if not already present
+        if "Matches" not in self.viewer.layers:
+            empty_matches = np.zeros_like(mask_layer.data, dtype=np.uint16)
+            self.viewer.add_labels(empty_matches, name="Matches", opacity=1.0)
+
+    def record_click(self, layer, event):
+        """Record the last clicked label on the 'Mask' layer."""
+        if event.type == "mouse_press":
+            pos = tuple(map(int, event.position))  # Get clicked position
+            label_value = layer.data[pos]  # Get the label at clicked position
+
+            if label_value > 0:  # Only record nonzero labels
+                self.last_click = (pos, label_value)
+
+    
+    def on_label_click(self, event):
+        """Store the last clicked label and print a message."""
+        if "Mask" not in self.viewer.layers:
+            print("No mask layer found.")
+            return
+
+        mask_layer = self.viewer.layers["Mask"]
+        coords = tuple(map(int, event.position))  # Get clicked coordinates
+        label = mask_layer.data[coords]  # Get label value at clicked point
+
+        if label > 0:  # Ignore background clicks
+            self.last_click = (coords, label)
+            print(f"Selected label {label} from {self.viewer.title}")
+
+    def match_labels(self):
+        """Transfer all pixels with the clicked label from 'Mask' to 'Matches'."""
+        if self.last_click is None or self.other_loader.last_click is None:
+            print("Click on a label in each viewer before pressing 'm'")
+            return
+
+        (pos1, label1) = self.last_click
+        (pos2, label2) = self.other_loader.last_click
+
+        # Get the mask layers
+        mask_layer_1 = self.viewer.layers.get("Mask")
+        mask_layer_2 = self.other_loader.viewer.layers.get("Mask")
+
+        if mask_layer_1 is None or mask_layer_2 is None:
+            print("Mask layers are missing in one or both viewers.")
+            return
+
+        # Get the matches layers (create if missing)
+        if "Matches" not in self.viewer.layers:
+            matches_layer_1 = self.viewer.add_labels(np.zeros_like(mask_layer_1.data, dtype=np.uint16), name="Matches")
+        else:
+            matches_layer_1 = self.viewer.layers["Matches"]
+
+        if "Matches" not in self.other_loader.viewer.layers:
+            matches_layer_2 = self.other_loader.viewer.add_labels(np.zeros_like(mask_layer_2.data, dtype=np.uint16), name="Matches")
+        else:
+            matches_layer_2 = self.other_loader.viewer.layers["Matches"]
+
+        # Find all pixels with the clicked labels
+        mask_indices_1 = mask_layer_1.data == label1
+        mask_indices_2 = mask_layer_2.data == label2
+
+        # Assign a new unique label for the match
+        new_label = max(matches_layer_1.data.max(), matches_layer_2.data.max()) + 1
+
+        # Transfer the matched labels to the Matches layer
+        matches_layer_1.data[mask_indices_1] = new_label
+        matches_layer_2.data[mask_indices_2] = new_label
+
+        # Refresh layers to show the update
+        matches_layer_1.refresh()
+        matches_layer_2.refresh()
+
+        print(f"Matched all pixels of label {label1} in Viewer 1 with label {label2} in Viewer 2.")
+
+        # Reset last clicks
+        self.last_click = None
+        self.other_loader.last_click = None
+
+
+
+    def save_match(self, label_value):
+        """Save matched labels to a JSON file."""
+        if os.path.exists(MATCH_FILE):
+            with open(MATCH_FILE, "r") as f:
+                data = json.load(f)
+        else:
+            data = []
+
+        data.append({"label": label_value})
+
+        with open(MATCH_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+
+
     def load_config(self, config_path):
         try:
             with open(config_path, 'r') as file:
@@ -165,7 +280,11 @@ class ImageLoader(QWidget):
         mask_path, _ = QFileDialog.getOpenFileName(self, "Open Mask File", filter="TIFF Files (*.tif *.tiff)")
         if mask_path:
             mask_data = imread(mask_path)  # Load the TIFF mask
-            self.viewer.add_labels(mask_data, name='Mask')
+            mask_layer = self.viewer.add_labels(mask_data, name='Mask', opacity=0.5)
+
+            # Attach mouse click event
+            mask_layer.mouse_drag_callbacks.append(self.on_label_click)
+
 
     def save_image(self):
         if self.loaded_layer_name is None:
@@ -299,11 +418,18 @@ class ImageLoader(QWidget):
 
 
 def main():
+
+
+
     in_vivo_viewer = napari.Viewer(title='In Vivo Brain Viewer')
     ex_vivo_viewer = napari.Viewer(title='Ex Vivo Slices Viewer')
 
     in_vivo_loader = ImageLoader(in_vivo_viewer)
     ex_vivo_loader = ImageLoader(ex_vivo_viewer)
+       
+    # Set references to the other viewer
+    in_vivo_loader.other_loader = ex_vivo_loader
+    ex_vivo_loader.other_loader = in_vivo_loader
     
     in_vivo_viewer.window.add_dock_widget(in_vivo_loader, name='Image Loader', area='right')
     ex_vivo_viewer.window.add_dock_widget(ex_vivo_loader, name='Image Loader', area='right')
