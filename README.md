@@ -1,23 +1,188 @@
-# Glomeralign
+# GlomerAlign Documentation
 
-GlomerAlign is a package to align glomeruli from ex-vivo slices to in-vivo 3D volume
+## Overview
 
-## Table of Contents
+GlomerAlign is a Python application for aligning and comparing in vivo and ex vivo brain images, with a focus on glomeruli identification and matching. The tool provides a user-friendly interface built with Napari for visualizing, manipulating, and segmenting 3D image stacks, as well as matching corresponding structures between different imaging modalities.
 
 ## Installation
 
-To install Glomeralign, clone the repository and install the dependencies:
+### Prerequisites
+
+- Python 3.7+
+- The following Python packages:
+  - numpy
+  - pandas
+  - PyYAML
+  - tifffile
+  - scipy
+  - scikit-image
+  - napari
+  - PyQt5
+  - cellpose
+
+### Setup
+
+1. Clone the repository:
+   ```bash
+   git clone git@github.com:CristiSoitu/GlomerAlign.git
+   cd glomeralign
+   ```
+
+2. Install the required packages:
+   ```bash
+   pip install numpy pandas pyyaml tifffile scipy scikit-image napari pyqt5 cellpose
+   ```
+
+3. Create a configuration file:
+   ```
+   mkdir config
+   ```
+   Create a file named `config.yaml` in the `config` directory with the following structure:
+   ```yaml
+   models:
+     2d: "path/to/2d/model"
+     3d: "path/to/3d/model"
+     invivo_slices: "path/to/invivo/slices.tif"
+     invivo_segmentation: "path/to/invivo/segmentation.tif"
+     exvivo_slices: "path/to/exvivo/slices.tif"
+     exvivo_segmentation: "path/to/exvivo/segmentation.tif"
+   ```
+
+## Running the Application
+
+To start GlomerAlign, simply run:
 
 ```bash
-git clone ....
-cd glomeralign
-pip install -r requirements.txt
+python gui.py
 ```
 
-## Usage
+This will open two Napari viewers: one for in vivo brain images and one for ex vivo slices.
 
-Here is a basic example of how to use Glomeralign:
+## Features
+
+### Image Loading and Visualization
+
+- Load TIFF images for in vivo and ex vivo data
+- Load and display segmentation masks
+- Save transformed or processed images
+
+### Image Manipulation
+
+- Select specific slices for processing
+- Apply transformations to selected slices:
+  - 90° rotation
+  - 180° rotation
+  - Custom angle rotation
+  - Horizontal flip
+  - Vertical flip
+
+### Segmentation
+
+- 2D segmentation using Cellpose
+- 3D segmentation using Cellpose
+- GPU acceleration support
+
+### Glomeruli Matching
+
+- Select and match corresponding structures between in vivo and ex vivo images
+- Visual feedback for selected labels
+- Record matches in a CSV file for later analysis
+- Undo previous matches
+- Save and load match data
+
+## User Interface Guide
+
+### Image Loader Panel
+
+Both the in vivo and ex vivo viewers have an Image Loader panel with the following buttons:
+
+- **Load Image**: Open a TIFF file and display it in the viewer
+- **Load Mask**: Open a segmentation mask TIFF file
+- **Load Matched Data**: Load previously saved matching data
+- **Save Image**: Save the currently displayed image to a TIFF file
+- **Select Slices**: Open a dialog to select specific slices for processing
+- **Segmentation 2D**: Run 2D segmentation on the loaded image
+- **Segmentation 3D**: Run 3D segmentation on the loaded image
+- **Rotate 180°**: Rotate selected slices by 180 degrees
+- **Rotate 90°**: Rotate selected slices by 90 degrees
+- **Flip Horizontally**: Flip selected slices horizontally
+- **Flip Vertically**: Flip selected slices vertically
+- **Rotate by Custom Angle**: Rotate selected slices by a user-specified angle
+
+### Keyboard Shortcuts
+
+- **H**: Select a label in either viewer for matching
+- **Z**: Undo the last match
+
+## Matching Workflow
+
+1. Load images in both viewers using the **Load Image** button
+2. Load or create segmentation masks using the **Load Mask** button or segmentation functions
+3. Click **Load Matched Data** to initialize or load existing match data
+4. Select a label in the in vivo viewer by pressing **H** while hovering over it
+5. Select a corresponding label in the ex vivo viewer by pressing **H**
+6. The match will be recorded automatically and displayed in both viewers
+7. To undo a match, press **Z** in either viewer
+
+## Technical Implementation Details
+
+### Main Components
+
+1. **ImageLoader**: Handles loading, saving, and manipulating images in each viewer
+2. **SegmentationWorker**: Runs Cellpose segmentation in a separate thread
+3. **SliceSelectorDialog**: Provides a UI for selecting specific slices
+4. **MatchHandler**: Manages the matching of structures between viewers
+5. **MatchLoader**: Handles loading and saving match data
+
+### Data Structure
+
+The application creates a `matches` directory with the following files:
+
+- **glomeruli.csv**: Main file recording matches between in vivo and ex vivo structures
+- **invivo_matches.tif**: Image showing matched structures in the in vivo data
+- **exvivo_matches.tif**: Image showing matched structures in the ex vivo data
+- **invivo_glomeruli.csv**: Properties of detected structures in the in vivo data
+- **exvivo_glomeruli.csv**: Properties of detected structures in the ex vivo data
+
+### Configuration
+
+The application uses a YAML configuration file to store paths to:
+
+- 2D and 3D segmentation models
+- Default in vivo and ex vivo images
+- Default in vivo and ex vivo segmentation masks
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Missing configuration file**: Ensure the `config.yaml` file is located in the `./config/` directory
+2. **Segmentation errors**: Verify that Cellpose models are correctly specified in the configuration
+3. **Match data loading errors**: Check that both viewers have mask layers loaded
+
+### Error Messages
+
+- "No image loaded to select slices": You need to load an image before selecting slices
+- "No slices selected for transformation": Select slices before applying transformations
+- "Masks Required": Load mask layers in both viewers before attempting to load match data
+
+## Development and Extension
+
+### Adding New Features
+
+1. Modify the relevant class in the code (ImageLoader, MatchHandler, etc.)
+2. Add UI components to the appropriate layout
+3. Connect new UI components to their handlers
+
+### Dependencies
+
+- **Napari**: Main visualization framework
+- **PyQt**: UI components and threading
+- **Cellpose**: Neural network-based segmentation
+- **NumPy/SciPy**: Image processing and analysis
+- **Pandas**: Data management and CSV handling
 
 ## License
 
-This project is licensed under the MIT License. 
+[MIT]
+
